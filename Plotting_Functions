@@ -1,0 +1,204 @@
+
+Plot_Clinical_Features <- function(clinical_features_matrix = NULL, #rows: clinical features, columns: patients, binary (0--false; 1--true)
+                                   clin_features = 1:nrow(clinical_features_matrix), #subset rows
+                                   cluster_assignments, #cluster assignments, lowest cluster number must be 1, names are patient names matching the clinical_features_matrix
+                                   p_val_threshold = 0.05, #p-value threshold for the chi-square analysis
+                                   threshold_enrichment = 3, #fold-change threshold to quantify enrichment of a feature inside a cluster
+                                   font_size=0.7, #font size for the features on the right side
+                                   feat_names = NULL, #rename features (row.names(clinical_features_matrix))
+                                   significant_cosegregation_color = 'pink', #color for patients whose distribution across clusters is non-random
+                                   feature_enrichment_color = 'red', #color for patients within clusters that are enriched
+                                   non_significant_color = 'black'){ #color for features that are randomly distributed
+  
+  if (!is.null(feat_names)){
+    row.names(clinical_features_matrix) <- feat_names
+  }
+  
+  nb_features = length(clin_features) #total number of features to look at
+  nb_clusters = length(table(cluster_assignments)) #total number of clusters in the cluster_assignment object
+  
+  #Formation of clusters and of the clinical data matrix
+  #Assigns each patient to cluster 1, 2, 3, ...
+  #Assemble the clinical features (the rows selected in clin_features) from the matrix clinical_features_matrix
+  #End result: a matrix with patient names ordered by cluster (columns) and clinical features (rows)
+  COUNTER = 0
+  for (cluster_id in (1:nb_clusters)){
+    if (COUNTER == 0){
+      patient_cluster_matrix = clinical_features_matrix[ clin_features , names(which(cluster_assignments == cluster_id)) ]
+    }
+    if (COUNTER !=0){
+      patient_cluster_matrix = cbind(patient_cluster_matrix, clinical_features_matrix[ clin_features , names(which(cluster_assignments == cluster_id)) ] )
+    }
+    COUNTER = COUNTER + 1
+  }
+  
+  COUNTER = 0
+  for (i in 1:nb_clusters){
+    assign(x = paste0('cluster_',i), value = (COUNTER + 1) : (COUNTER + (table(cluster_assignments)[i])) )
+    print(get(x = paste0('cluster_',i)))
+    COUNTER = COUNTER + (table(cluster_assignments)[i]) - 1
+  } 
+
+  
+  #Create data frames to report the clinical data from each cluster (the sums, the porportions, the null ratios for chi-square)  
+  df_report_ratios = data.frame()
+  df_report_sums = data.frame()
+  df_report_null_ratios = data.frame()
+  
+  for (i in 1:nb_features){
+    print(i)
+    for (j in 1:nb_clusters){
+      print(paste0(row.names(patient_cluster_matrix)[i], ' | Cluster ', j , ' ',  round(sum(as.numeric(as.factor(patient_cluster_matrix[i,  get(x = paste0('cluster_',j))  ])) -1) / sum(as.numeric(as.factor(patient_cluster_matrix[i,  unlist(sapply(1:nb_clusters, function(k) get(x = paste0('cluster_', k))))    ]))-1) ,2) ))
+      df_report_sums[i,j] = sum(as.numeric(as.factor(patient_cluster_matrix[i,  get(x = paste0('cluster_',j))  ])) -1)
+      df_report_ratios[i,j] = round( sum(as.numeric(as.factor(patient_cluster_matrix[i,  get(x = paste0('cluster_',j))  ])) -1) / sum(as.numeric(as.factor(patient_cluster_matrix[i,  unlist(sapply(1:nb_clusters, function(k) get(x = paste0('cluster_', k))))     ])) -1) , 2)
+      df_report_null_ratios[i,j] = round(length(get(x = paste0('cluster_',j))) / length(unlist(sapply(1:nb_clusters, function(i) get(x = paste0('cluster_', i))))) , 2) 
+    }
+    df_report_sums[i,(nb_clusters + 1)] = sum(as.numeric(as.factor(patient_cluster_matrix[i,    unlist(sapply(1:nb_clusters, function(i) get(x = paste0('cluster_', i))))   ])) -1)
+    df_report_ratios[i,(nb_clusters + 1)] = sum(as.numeric(as.factor(patient_cluster_matrix[i,  unlist(sapply(1:nb_clusters, function(i) get(x = paste0('cluster_', i))))   ])) -1)
+    df_report_null_ratios[i,(nb_clusters + 1)] = sum(as.numeric(as.factor(patient_cluster_matrix[i,  unlist(sapply(1:nb_clusters, function(i) get(x = paste0('cluster_', i))))   ])) -1)
+  }
+  
+  
+  colnames(df_report_ratios) = c(paste0('cluster_',1:nb_clusters), 'n')
+  row.names(df_report_ratios) = row.names(patient_cluster_matrix)[1:nb_features]
+  colnames(df_report_sums) = c(paste0('cluster_',1:nb_clusters), 'n')
+  row.names(df_report_sums) = row.names(patient_cluster_matrix)[1:nb_features]
+  
+  list_df = list()
+  list_df[['ratios']] = df_report_ratios
+  list_df[['null_ratios']] = df_report_null_ratios
+  list_df[['sums']] = df_report_sums
+  
+  #Chi-square test of proportions for clinical features falling in the clusters
+  #use TryCatch because each row with sum = 0 will interrupt the program with an error (here I make the p-vals = 1 in case of an error)
+  last_column_df_report_sums = ncol(df_report_sums)
+  for (i in 1:nrow(df_report_sums)){
+    
+    df_chisq = data.frame(matrix(NA, nrow = 2 , ncol = nb_clusters))
+    df_chisq[1,] = df_report_sums[i , 1:nb_clusters]
+    
+    
+    
+    df_chisq[2,] = sapply(1:length(table(cluster_assignments)), function(i) table(cluster_assignments)[i] - df_chisq[1,i] )
+    
+    print(paste0('Contingency matrix for chi-square. Row 1: sum of 1s ; Row 2: sum of 0s :', row.names(df_report_sums)[i]))
+    print(df_chisq)
+    
+    df_report_sums[i,(last_column_df_report_sums + 1)] = tryCatch(expr = chisq.test(df_chisq)$p.val, error=function(e) 1)
+  }
+  colnames(df_report_sums)[last_column_df_report_sums + 1] = 'p-val'
+  
+  
+  
+  list_df[['sums']] = df_report_sums
+  
+  color_vector = NULL
+  color_vector[1:nrow(df_report_sums)] = non_significant_color
+  color_vector[which(df_report_sums[,'p-val'] < p_val_threshold)] = significant_cosegregation_color
+  
+  enrichment_clin_feat <- list_df$ratios/list_df$null_ratios
+  enrichment_clin_feat <- enrichment_clin_feat[,1:(ncol(enrichment_clin_feat) - 1)]
+  
+  list_df[['enrichment']] <- enrichment_clin_feat
+  
+  color_enrichment <- enrichment_clin_feat
+  color_enrichment <- as.matrix(color_enrichment)
+  for (i in 1:nrow(color_enrichment)){
+    color_enrichment[i,which(color_enrichment[i,] <= threshold_enrichment)] <- color_vector[i]
+    
+    if (color_vector[i] == non_significant_color){
+      color_enrichment[i,] <- color_vector[i]
+    }
+    
+    if (color_vector[i] == significant_cosegregation_color){
+      color_enrichment[i,which(as.numeric(color_enrichment[i,]) > threshold_enrichment)] <- feature_enrichment_color
+    }
+    
+  }
+  
+
+  for (clust in 1:length(unique(cluster_assignments))){
+    for (i in 1:nrow(patient_cluster_matrix)){
+      if (color_enrichment[i,clust] == feature_enrichment_color){
+        patient_cluster_matrix[i,names(which(cluster_assignments == clust))] <- ifelse(patient_cluster_matrix[i,names(which(cluster_assignments == clust))] == '1', '2', '0')
+      }
+    }
+  }
+  
+  #plotting the features
+  par(mfrow = c(nb_features+1,1), mai = c(0,1,0,1.5))
+  plot.new()
+  for (i in 1:nb_features){
+
+    nb_levels <- length(levels(as.factor(patient_cluster_matrix[i,])))
+      image(x = seq(from = 0.5, to = length(cluster_assignments) - 0.5, by = 1),
+            y = 1,
+            z = as.matrix(as.numeric(as.factor(patient_cluster_matrix[i,]))) ,
+            ylim = c(0,0), 
+            ylab = '', xlab = '', axes = F, 
+            col = c('white', color_vector[i], feature_enrichment_color)[1:nb_levels] )
+    
+    mtext(text = paste0('  ', row.names(clinical_features_matrix)[i]), side = 4, las = 1, cex = font_size, col = ifelse(color_vector[i] == non_significant_color, 'black', 'blue') )
+    
+    
+    barplot(log10(list_df[['sums']]$`p-val`)[i], 
+            add=T, 
+            xlim = c(min(log10(list_df[['sums']]$`p-val`)),0), 
+            horiz = T, space = -0.5, axes = F, col = 'black')
+    
+    abline(v = log(p_val_threshold), lty = 1, lwd = 3, col = 'red')
+    
+    
+    print(paste0(i,': ', row.names(patient_cluster_matrix)[i]))
+    
+    COUNTER = 0
+    abline(v = COUNTER, lty = 3, lwd = 1, col = 'black')
+    for (j in 1:nb_clusters){
+      COUNTER = COUNTER + table(cluster_assignments)[[j]]
+      abline(v = COUNTER, lty = 3, lwd = 1, col = 'black')
+      abline(h = -0.93, lty = 3, lwd = 1, col = 'black')
+    }
+    
+    if (i == 1 ){
+      
+      pos_cluster_labels <- lapply(sort(unique(cluster_assignments)), function(i) {
+        length(which(cluster_assignments == i))/2 + length(which(cluster_assignments < i))
+      })
+      
+      mtext(text = sort(unique(cluster_assignments)), side = 3, at = pos_cluster_labels)
+    }
+    
+  }
+  
+  return(list_df)
+  
+}
+
+##Example
+
+Plot_Clinical_Features(clinical_features_matrix = relevant_clin_features_FH[c(1,3:19, 21:22, 24:27),], cluster_assignments = pam_clust_9c, p_val_threshold = 0.0001, 
+                            feat_names = c('Vital Status',
+                                           't(6;9)',
+                                           't(8;21)',
+                                           't(3;5)(q25;q34)',
+                                           't(6;11)(q27;q23)',
+                                           't(9;11)',
+                                           't(10;11)(p11.2q23)',
+                                           't(11;19)(q(23;p13.1)',
+                                           'inv(16)',
+                                           'del(5q)',
+                                           'del(7q)',
+                                           'del(9q)',
+                                           'del(7)',
+                                           'trisomy 8',
+                                           'trisomy 21',
+                                           'MLL',
+                                           'del(X)',
+                                           'del(Y)',
+                                           'NPM mutation',
+                                           'CEBPA mutation',
+                                           'FLT3-ITD Positive',
+                                           'WT1 Mutation',
+                                           'MRD 1',
+                                           'MRD 2'), 
+                                           threshold_enrichment = 3)
